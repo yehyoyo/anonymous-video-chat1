@@ -1,58 +1,57 @@
 const express = require("express");
 const http = require("http");
-const socketIo = require("socket.io");
+const { Server } = require("socket.io");
 const path = require("path");
 
 const app = express();
 const server = http.createServer(app);
-const io = socketIo(server);
+const io = new Server(server);
 
 const PORT = process.env.PORT || 3000;
 
-// 靜態檔案（public資料夾）
 app.use(express.static(path.join(__dirname, "public")));
 
 let waitingUser = null;
 
 io.on("connection", (socket) => {
-  console.log("使用者連線:", socket.id);
+  console.log("使用者已連線:", socket.id);
 
   if (waitingUser) {
     // 配對
     socket.partner = waitingUser;
     waitingUser.partner = socket;
 
-    // 送出 offer 通知
     socket.emit("offer", { from: waitingUser.id });
     waitingUser.emit("offer", { from: socket.id });
 
     waitingUser = null;
   } else {
-    // 沒人等，自己變成等待者
     waitingUser = socket;
   }
 
-  // 接收到 answer
-  socket.on("answer", ({ offer, to }) => {
-    io.to(to).emit("answer", { offer });
+  // 收到 answer
+  socket.on("answer", (data) => {
+    if (socket.partner) {
+      socket.partner.emit("answer", data);
+    }
   });
 
-  // ICE candidate 傳遞
-  socket.on("candidate", (candidate) => {
+  // ICE candidate
+  socket.on("ice-candidate", (candidate) => {
     if (socket.partner) {
-      socket.partner.emit("candidate", candidate);
+      socket.partner.emit("ice-candidate", candidate);
     }
   });
 
   socket.on("disconnect", () => {
-    console.log("使用者離線:", socket.id);
+    if (socket.partner) {
+      socket.partner.partner = null;
+      socket.partner = null;
+    }
     if (waitingUser === socket) {
       waitingUser = null;
     }
-    if (socket.partner) {
-      socket.partner.emit("leave");
-      socket.partner.partner = null;
-    }
+    console.log("使用者已離線:", socket.id);
   });
 });
 
