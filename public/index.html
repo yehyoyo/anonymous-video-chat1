@@ -1,8 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="UTF-8">
   <title>匿名視訊聊天室</title>
 </head>
 <body>
@@ -10,71 +9,73 @@
   <video id="localVideo" autoplay playsinline muted width="320"></video>
   <video id="remoteVideo" autoplay playsinline width="320"></video>
   <br />
-  <button onclick="leaveChat(true)">離開</button>
+  <button onclick="leaveChat()">離開</button>
 
   <script src="/socket.io/socket.io.js"></script>
   <script>
     const socket = io();
     const localVideo = document.getElementById("localVideo");
     const remoteVideo = document.getElementById("remoteVideo");
-
     let localStream;
-    const peerConnection = new RTCPeerConnection();
-    let isInitiator = false;
+    let peerConnection;
 
-    async function startChat() {
-      try {
-        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        localVideo.srcObject = localStream;
-        localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
-      } catch (err) {
-        console.error("getUserMedia error:", err);
-      }
+    const config = {
+      iceServers: [
+        { urls: "stun:stun.l.google.com:19302" }
+      ]
+    };
+
+    async function start() {
+      localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      localVideo.srcObject = localStream;
+
+      peerConnection = new RTCPeerConnection(config);
+
+      localStream.getTracks().forEach(track => {
+        peerConnection.addTrack(track, localStream);
+      });
+
+      peerConnection.ontrack = (event) => {
+        remoteVideo.srcObject = event.streams[0];
+      };
+
+      peerConnection.onicecandidate = (event) => {
+        if (event.candidate) {
+          socket.emit("ice-candidate", event.candidate);
+        }
+      };
     }
 
-    peerConnection.ontrack = event => {
-      remoteVideo.srcObject = event.streams[0];
-    };
-
-    peerConnection.onicecandidate = event => {
-      if (event.candidate) {
-        socket.emit("candidate", event.candidate);
-      }
-    };
-
-    socket.on("connect", () => {
-      startChat();
-    });
-
     socket.on("offer", async ({ from }) => {
+      await start();
+
       const offer = await peerConnection.createOffer();
       await peerConnection.setLocalDescription(offer);
-      socket.emit("answer", { offer, to: from });
+
+      socket.emit("answer", {
+        to: from,
+        sdp: offer
+      });
     });
 
-    socket.on("answer", async ({ offer }) => {
-      await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+    socket.on("answer", async ({ sdp }) => {
+      const remoteDesc = new RTCSessionDescription(sdp);
+      await peerConnection.setRemoteDescription(remoteDesc);
     });
 
-    socket.on("candidate", async (candidate) => {
+    socket.on("ice-candidate", async (candidate) => {
       try {
-        await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
-      } catch (err) {
-        console.error("ICE candidate error:", err);
+        await peerConnection.addIceCandidate(candidate);
+      } catch (e) {
+        console.error("Error adding received ice candidate", e);
       }
     });
 
-    function leaveChat(force = false) {
-      if (remoteVideo.srcObject) {
-        remoteVideo.srcObject.getTracks().forEach(track => track.stop());
-        remoteVideo.srcObject = null;
-      }
-      if (localStream) {
-        localStream.getTracks().forEach(track => track.stop());
-      }
-      peerConnection.close();
+    function leaveChat() {
       socket.disconnect();
-      if (force) location.reload();
+      if (peerConnection) {
+        peerConnection.close();
+      }
     }
   </script>
 </body>
