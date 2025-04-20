@@ -1,7 +1,7 @@
 {
   "name": "anonymous-video-chat",
   "version": "1.0.0",
-  "description": "A private anonymous video chat app",
+  "description": "Private anonymous WebRTC video chat",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
