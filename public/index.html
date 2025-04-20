@@ -1,1 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>匿名視訊聊天室</title>
+</head>
+<body>
+  <h1>Welcome to the Anonymous Video Chat</h1>
+  <video id="localVideo" autoplay playsinline muted width="320"></video>
+  <video id="remoteVideo" autoplay playsinline width="320"></video>
+  <br>
+  <button onclick="leaveChat(true)">離開</button>
 
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+    const localVideo = document.getElementById('localVideo');
+    const remoteVideo = document.getElementById('remoteVideo');
+    const peerConnection = new RTCPeerConnection();
+    let localStream;
+
+    async function startChat() {
+      localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      localVideo.srcObject = localStream;
+
+      localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+
+      peerConnection.ontrack = event => {
+        remoteVideo.srcObject = event.streams[0];
+      };
+
+      peerConnection.onicecandidate = e => {
+        if (e.candidate) socket.emit('ice-candidate', e.candidate);
+      };
+
+      socket.on('offer', async offer => {
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+        const answer = await peerConnection.createAnswer();
+        await peerConnection.setLocalDescription(answer);
+        socket.emit('answer', answer);
+      });
+
+      socket.on('answer', answer => {
+        peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+      });
+
+      socket.on('ice-candidate', candidate => {
+        peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+      });
+
+      socket.on('leave', () => {
+        leaveChat(false);
+        setTimeout(() => {
+          startChat();
+        }, 1000);
+      });
+
+      const offer = await peerConnection.createOffer();
+      await peerConnection.setLocalDescription(offer);
+      socket.emit('offer', offer);
+    }
+
+    function leaveChat(exit = false) {
+      peerConnection.close();
+      if (exit) socket.emit('leave');
+    }
+
+    startChat();
+  </script>
+</body>
+</html>
