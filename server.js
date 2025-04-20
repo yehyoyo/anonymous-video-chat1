@@ -9,20 +9,20 @@ const io = socketIo(server);
 
 const PORT = process.env.PORT || 3000;
 
-// 靜態檔案路徑設定
+// 靜態檔案（public資料夾）
 app.use(express.static(path.join(__dirname, "public")));
 
 let waitingUser = null;
 
-// Socket.io 處理連線
 io.on("connection", (socket) => {
-  console.log("有使用者連線:", socket.id);
+  console.log("使用者連線:", socket.id);
 
   if (waitingUser) {
-    // 有人在等，配對
+    // 配對
     socket.partner = waitingUser;
     waitingUser.partner = socket;
 
+    // 送出 offer 通知
     socket.emit("offer", { from: waitingUser.id });
     waitingUser.emit("offer", { from: socket.id });
 
@@ -32,39 +32,30 @@ io.on("connection", (socket) => {
     waitingUser = socket;
   }
 
-  socket.on("answer", (data) => {
-    if (socket.partner) {
-      socket.partner.emit("answer", data);
-    }
+  // 接收到 answer
+  socket.on("answer", ({ offer, to }) => {
+    io.to(to).emit("answer", { offer });
   });
 
-  socket.on("ice-candidate", (candidate) => {
+  // ICE candidate 傳遞
+  socket.on("candidate", (candidate) => {
     if (socket.partner) {
-      socket.partner.emit("ice-candidate", candidate);
+      socket.partner.emit("candidate", candidate);
     }
   });
 
   socket.on("disconnect", () => {
     console.log("使用者離線:", socket.id);
-    if (socket.partner) {
-      socket.partner.partner = null;
-      socket.partner.emit("leave");
-    }
     if (waitingUser === socket) {
       waitingUser = null;
     }
-  });
-
-  socket.on("leave", () => {
     if (socket.partner) {
       socket.partner.emit("leave");
       socket.partner.partner = null;
-      socket.partner = null;
     }
-    waitingUser = null;
   });
 });
 
 server.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
