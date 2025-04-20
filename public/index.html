@@ -70,3 +70,15 @@
   </script>
 </body>
 </html>
+<script src="/socket.io/socket.io.js"></script>
+<script>
+  const socket = io();
+
+  // 當收到 offer
+  socket.on("offer", async () => {
+    // 發送 localStream、創建 peerConnection 等
+  });
+
+  socket.on("answer", () => { ... });
+  socket.on("ice-candidate", () => { ... });
+</script>
