@@ -1,84 +1,86 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-Hant">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>匿名視訊聊天室</title>
+  <title>匿名視訊聊天</title>
+  <style>
+    video {
+      width: 320px;
+      margin: 10px;
+    }
+  </style>
 </head>
 <body>
   <h1>Welcome to the Anonymous Video Chat</h1>
-  <video id="localVideo" autoplay playsinline muted width="320"></video>
-  <video id="remoteVideo" autoplay playsinline width="320"></video>
+  <video id="localVideo" autoplay playsinline muted></video>
+  <video id="remoteVideo" autoplay playsinline></video>
   <br>
   <button onclick="leaveChat(true)">離開</button>
 
   <script src="/socket.io/socket.io.js"></script>
   <script>
     const socket = io();
-    const localVideo = document.getElementById('localVideo');
-    const remoteVideo = document.getElementById('remoteVideo');
-    const peerConnection = new RTCPeerConnection();
+
+    const localVideo = document.getElementById("localVideo");
+    const remoteVideo = document.getElementById("remoteVideo");
+
+    const peerConnection = new RTCPeerConnection({
+      iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+    });
+
     let localStream;
 
     async function startChat() {
       localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      localVideo.srcObject = localStream;
-
       localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+      localVideo.srcObject = localStream;
+    }
 
-      peerConnection.ontrack = event => {
-        remoteVideo.srcObject = event.streams[0];
-      };
+    peerConnection.ontrack = event => {
+      remoteVideo.srcObject = event.streams[0];
+    };
 
-      peerConnection.onicecandidate = e => {
-        if (e.candidate) socket.emit('ice-candidate', e.candidate);
-      };
+    peerConnection.onicecandidate = e => {
+      if (e.candidate) {
+        socket.emit("ice-candidate", e.candidate);
+      }
+    };
 
-      socket.on('offer', async offer => {
-        await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-        const answer = await peerConnection.createAnswer();
-        await peerConnection.setLocalDescription(answer);
-        socket.emit('answer', answer);
-      });
-
-      socket.on('answer', answer => {
-        peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
-      });
-
-      socket.on('ice-candidate', candidate => {
-        peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
-      });
-
-      socket.on('leave', () => {
-        leaveChat(false);
-        setTimeout(() => {
-          startChat();
-        }, 1000);
-      });
-
+    socket.on("offer", async ({ from }) => {
+      await startChat();
       const offer = await peerConnection.createOffer();
       await peerConnection.setLocalDescription(offer);
-      socket.emit('offer', offer);
-    }
+      socket.emit("answer", {
+        target: from,
+        sdp: offer
+      });
+    });
 
-    function leaveChat(exit = false) {
+    socket.on("answer", async ({ sdp }) => {
+      await peerConnection.setRemoteDescription(new RTCSessionDescription(sdp));
+    });
+
+    socket.on("ice-candidate", (candidate) => {
+      peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+    });
+
+    socket.on("leave", () => {
       peerConnection.close();
-      if (exit) socket.emit('leave');
+      remoteVideo.srcObject = null;
+      alert("對方已離開，請重新整理網頁進行配對");
+    });
+
+    function leaveChat(send = false) {
+      if (send) {
+        socket.emit("leave");
+      }
+      peerConnection.close();
+      remoteVideo.srcObject = null;
     }
 
+    // 自動開始
     startChat();
   </script>
 </body>
 </html>
-<script src="/socket.io/socket.io.js"></script>
-<script>
-  const socket = io();
-
-  // 當收到 offer
-  socket.on("offer", async () => {
-    // 發送 localStream、創建 peerConnection 等
-  });
-
-  socket.on("answer", () => { ... });
-  socket.on("ice-candidate", () => { ... });
-</script>
