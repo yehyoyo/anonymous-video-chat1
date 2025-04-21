@@ -22,13 +22,11 @@ io.on("connection", (socket) => {
   socket.on("join", () => {
     console.log(`➡️ ${socket.id} 請求配對`);
 
-    // 先清掉可能殘留的配對
     if (waitingUser === socket) {
       waitingUser = null;
     }
 
     if (waitingUser && waitingUser.id !== socket.id) {
-      // 配對成功
       socket.partner = waitingUser;
       waitingUser.partner = socket;
 
@@ -39,46 +37,48 @@ io.on("connection", (socket) => {
 
       waitingUser = null;
     } else {
-      // 無人等待，加入等待佇列
       waitingUser = socket;
       console.log(`⏳ ${socket.id} 等待中...`);
     }
   });
 
   socket.on("offer", ({ to, sdp }) => {
+    console.log(`📨 ${socket.id} -> ${to} 發送 offer`);
     io.to(to).emit("offer", { from: socket.id, sdp });
   });
 
   socket.on("answer", ({ to, sdp }) => {
+    console.log(`📨 ${socket.id} -> ${to} 回覆 answer`);
     io.to(to).emit("answer", { sdp });
   });
 
   socket.on("ice-candidate", (candidate) => {
     if (socket.partner) {
+      console.log(`❄️ ${socket.id} 傳送 ICE candidate 給 ${socket.partner.id}`);
       socket.partner.emit("ice-candidate", candidate);
+    } else {
+      console.log(`⚠️ ${socket.id} 嘗試發送 ICE，但尚未配對成功`);
     }
   });
 
-  // 使用者主動離線（按下離開或下一個）
   socket.on("manual-leave", () => {
     console.log(`🚪 ${socket.id} 主動離開聊天室`);
     handleDisconnect(socket);
   });
 
-  // 使用者斷線（關閉網頁或中斷連線）
   socket.on("disconnect", () => {
     console.log(`🔴 使用者離線: ${socket.id}`);
     handleDisconnect(socket);
   });
 
   function handleDisconnect(socket) {
-    // 移除等待中
     if (waitingUser && waitingUser.id === socket.id) {
+      console.log(`🧹 ${socket.id} 從等待佇列移除`);
       waitingUser = null;
     }
 
-    // 通知對方離開
     if (socket.partner) {
+      console.log(`🔔 通知 ${socket.partner.id} 其對象 ${socket.id} 已離開`);
       socket.partner.emit("partner-left");
       socket.partner.partner = null;
     }
