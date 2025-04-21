@@ -11,7 +11,7 @@
   <br />
   <button onclick="leaveChat()">離開</button>
 
-  <script src="/socket.io/socket.io.js"></script>
+ <script src="https://cdn.socket.io/4.7.2/socket.io.min.js" crossorigin="anonymous"></script>
   <script>
     const socket = io();
     const localVideo = document.getElementById("localVideo");
@@ -80,3 +80,14 @@
   </script>
 </body>
 </html>
+window.onload = function () {
+  console.log("頁面載入完成，等待與伺服器連線...");
+};
+
+socket.on("connect", async () => {
+  console.log("Socket 已連線，開始取得使用者媒體");
+  await start();
+  console.log("媒體取得完成，送出 join");
+  socket.emit("join");
+});
+
