@@ -9,7 +9,7 @@ const io = new Server(server);
 
 const PORT = process.env.PORT || 3000;
 
-// 提供靜態前端檔案
+// 提供前端 static 目錄（index.html）
 app.use(express.static(path.join(__dirname, "public")));
 
 let waitingUser = null;
@@ -17,81 +17,76 @@ let waitingUser = null;
 io.on("connection", (socket) => {
   console.log(`🟢 使用者已連線: ${socket.id}`);
 
-  // 加入配對佇列
-  socket.on("join", () => {
-    console.log(`➡️ ${socket.id} 加入配對佇列`);
+  socket.partner = null;
 
-    // 先清掉舊的配對資訊
-    socket.partner = null;
+  socket.on("join", () => {
+    console.log(`➡️ ${socket.id} 請求配對`);
+
+    // 先清掉可能殘留的配對
+    if (waitingUser === socket) {
+      waitingUser = null;
+    }
 
     if (waitingUser && waitingUser.id !== socket.id) {
-      // 成功配對
+      // 配對成功
       socket.partner = waitingUser;
       waitingUser.partner = socket;
 
       socket.emit("ready", waitingUser.id);
       waitingUser.emit("ready", socket.id);
 
-      console.log(`✅ 配對成功: ${socket.id} <--> ${waitingUser.id}`);
+      console.log(`✅ 配對完成: ${socket.id} <--> ${waitingUser.id}`);
 
       waitingUser = null;
     } else {
-      // 沒人等，進入等待
+      // 無人等待，加入等待佇列
       waitingUser = socket;
-      console.log(`⏳ ${socket.id} 等待配對中`);
+      console.log(`⏳ ${socket.id} 等待中...`);
     }
   });
 
-  // 傳送 offer
   socket.on("offer", ({ to, sdp }) => {
-    console.log(`📤 ${socket.id} 傳送 offer 給 ${to}`);
     io.to(to).emit("offer", { from: socket.id, sdp });
   });
 
-  // 傳送 answer
   socket.on("answer", ({ to, sdp }) => {
-    console.log(`📥 ${socket.id} 傳送 answer 給 ${to}`);
     io.to(to).emit("answer", { sdp });
   });
 
-  // 傳送 ICE candidate
   socket.on("ice-candidate", (candidate) => {
     if (socket.partner) {
       socket.partner.emit("ice-candidate", candidate);
     }
   });
 
-  // 中斷處理
-  socket.on("disconnect", () => {
-    console.log(`🔴 使用者離線: ${socket.id}`);
-
-    if (waitingUser === socket) {
-      waitingUser = null;
-    }
-
-    if (socket.partner) {
-      socket.partner.emit("disconnect");
-      socket.partner.partner = null;
-    }
-  });
-
-  // 使用者主動離線（點了「離開」或「下一個」）
+  // 使用者主動離線（按下離開或下一個）
   socket.on("manual-leave", () => {
     console.log(`🚪 ${socket.id} 主動離開聊天室`);
+    handleDisconnect(socket);
+  });
 
-    if (waitingUser === socket) {
+  // 使用者斷線（關閉網頁或中斷連線）
+  socket.on("disconnect", () => {
+    console.log(`🔴 使用者離線: ${socket.id}`);
+    handleDisconnect(socket);
+  });
+
+  function handleDisconnect(socket) {
+    // 移除等待中
+    if (waitingUser && waitingUser.id === socket.id) {
       waitingUser = null;
     }
 
+    // 通知對方離開
     if (socket.partner) {
-      socket.partner.emit("disconnect");
+      socket.partner.emit("partner-left");
       socket.partner.partner = null;
     }
 
     socket.partner = null;
-  });
+  }
 });
 
 server.listen(PORT, () => {
-  console.log(`🚀 Server running on http://localhost:${PORT}`);
+  console.log(`🚀 Server running at http://localhost:${PORT}`);
 });
