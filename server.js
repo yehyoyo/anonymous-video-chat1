@@ -6,19 +6,23 @@ const path = require("path");
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
+
 const PORT = process.env.PORT || 3000;
 
+// 提供前端 public 目錄中的靜態資源
 app.use(express.static(path.join(__dirname, "public")));
 
 let waitingUser = null;
 
 io.on("connection", (socket) => {
   console.log(`🟢 使用者已連線: ${socket.id}`);
+
   socket.partner = null;
 
   socket.on("join", () => {
-    console.log(`➡️ ${socket.id} 請求配對`);
+    console.log(`👋 ${socket.id} 請求配對`);
 
+    // 避免重複進入等待佇列
     if (waitingUser === socket) {
       waitingUser = null;
     }
@@ -35,49 +39,48 @@ io.on("connection", (socket) => {
 
       waitingUser = null;
     } else {
-      // 尚無人等待，加入等待池
       waitingUser = socket;
-      console.log(`⏳ ${socket.id} 等待配對中...`);
+      console.log(`⏳ ${socket.id} 加入等待佇列`);
     }
   });
 
   socket.on("offer", ({ to, sdp }) => {
-    console.log(`📤 ${socket.id} 發送 offer 給 ${to}`);
+    console.log(`📤 ${socket.id} 傳送 offer 給 ${to}`);
     io.to(to).emit("offer", { from: socket.id, sdp });
   });
 
   socket.on("answer", ({ to, sdp }) => {
-    console.log(`📥 ${socket.id} 回覆 answer 給 ${to}`);
+    console.log(`📥 ${socket.id} 傳送 answer 給 ${to}`);
     io.to(to).emit("answer", { sdp });
   });
 
   socket.on("ice-candidate", (candidate) => {
+    console.log(`❄️ ${socket.id} 傳送 ICE 候選`);
     if (socket.partner) {
-      console.log(`❄️ ${socket.id} ICE 候選 → ${socket.partner.id}`);
       socket.partner.emit("ice-candidate", candidate);
     } else {
-      console.warn(`⚠️ ICE 候選傳送失敗，${socket.id} 尚無 partner`);
+      console.log("⚠️ 尚未配對成功，無法傳送 ICE");
     }
   });
 
   socket.on("manual-leave", () => {
     console.log(`🚪 ${socket.id} 主動離開聊天室`);
-    handleDisconnect(socket);
+    cleanup(socket);
   });
 
   socket.on("disconnect", () => {
-    console.log(`🔴 使用者離線: ${socket.id}`);
-    handleDisconnect(socket);
+    console.log(`🔴 ${socket.id} 離線`);
+    cleanup(socket);
   });
 
-  function handleDisconnect(socket) {
+  function cleanup(socket) {
     if (waitingUser && waitingUser.id === socket.id) {
-      console.log(`🧹 清除等待中的使用者: ${socket.id}`);
+      console.log(`🧹 移除等待中的 ${socket.id}`);
       waitingUser = null;
     }
 
     if (socket.partner) {
-      console.log(`🧨 通知 ${socket.partner.id}：partner ${socket.id} 已離線`);
+      console.log(`🔁 通知 ${socket.partner.id} 對方已離線`);
       socket.partner.emit("partner-left");
       socket.partner.partner = null;
     }
@@ -87,5 +90,5 @@ io.on("connection", (socket) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`🚀 Server 正在執行: http://localhost:${PORT}`);
+  console.log(`🚀 Server running at http://localhost:${PORT}`);
 });
