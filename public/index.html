@@ -9,6 +9,12 @@
       margin-bottom: 10px;
       color: green;
     }
+    video {
+      margin: 5px;
+    }
+    button {
+      margin-right: 8px;
+    }
   </style>
 </head>
 <body>
@@ -18,6 +24,7 @@
   <video id="remoteVideo" autoplay playsinline width="320"></video>
   <br />
   <button onclick="leaveChat()">離開</button>
+  <button onclick="nextChat()">下一個</button>
 
   <!-- 使用 CDN 載入 socket.io -->
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js" crossorigin="anonymous"></script>
@@ -44,7 +51,7 @@
 
         peerConnection.ontrack = (event) => {
           remoteVideo.srcObject = event.streams[0];
-          statusDiv.textContent = "配對成功，開始通話中...";
+          statusDiv.textContent = "✅ 配對成功，開始通話中...";
         };
 
         peerConnection.onicecandidate = (event) => {
@@ -59,9 +66,25 @@
     }
 
     function leaveChat() {
-      if (peerConnection) peerConnection.close();
-      if (socket.connected) socket.disconnect();
+      if (peerConnection) {
+        peerConnection.close();
+        peerConnection = null;
+      }
+      if (socket.connected) {
+        socket.disconnect();
+      }
+      if (localVideo.srcObject) {
+        localVideo.srcObject.getTracks().forEach(track => track.stop());
+        localVideo.srcObject = null;
+      }
+      remoteVideo.srcObject = null;
       statusDiv.textContent = "你已離開聊天室";
+    }
+
+    function nextChat() {
+      leaveChat();
+      statusDiv.textContent = "正在重新配對中...";
+      setTimeout(() => window.location.reload(), 1000);
     }
 
     socket.on("connect", async () => {
@@ -75,7 +98,7 @@
       const offer = await peerConnection.createOffer();
       await peerConnection.setLocalDescription(offer);
       socket.emit("offer", { to: partnerId, sdp: offer });
-      statusDiv.textContent = "配對成功，發送 offer...";
+      statusDiv.textContent = "📤 配對成功，發送 offer...";
     });
 
     socket.on("offer", async ({ from, sdp }) => {
@@ -84,13 +107,13 @@
       const answer = await peerConnection.createAnswer();
       await peerConnection.setLocalDescription(answer);
       socket.emit("answer", { to: from, sdp: answer });
-      statusDiv.textContent = "已配對，建立連線中...";
+      statusDiv.textContent = "🔁 已配對，建立連線中...";
     });
 
     socket.on("answer", async ({ sdp }) => {
       const remoteDesc = new RTCSessionDescription(sdp);
       await peerConnection.setRemoteDescription(remoteDesc);
-      statusDiv.textContent = "已建立連線，等待視訊串流...";
+      statusDiv.textContent = "🟢 已建立連線，等待視訊串流...";
     });
 
     socket.on("ice-candidate", async (candidate) => {
@@ -102,7 +125,7 @@
     });
 
     socket.on("disconnect", () => {
-      statusDiv.textContent = "連線中斷";
+      statusDiv.textContent = "❌ 連線中斷";
     });
   </script>
 </body>
