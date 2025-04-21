@@ -130,3 +130,101 @@
   </script>
 </body>
 </html>
+<button onclick="leaveChat()">離開</button>
+<button onclick="nextUser()">下一個</button>
+
+<script>
+  let socket = io();
+  let peerConnection;
+  let localStream;
+  const config = {
+    iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+  };
+
+  const statusDiv = document.getElementById("status");
+  const localVideo = document.getElementById("localVideo");
+  const remoteVideo = document.getElementById("remoteVideo");
+
+  async function start() {
+    localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    localVideo.srcObject = localStream;
+
+    peerConnection = new RTCPeerConnection(config);
+    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+
+    peerConnection.ontrack = (event) => {
+      remoteVideo.srcObject = event.streams[0];
+      statusDiv.textContent = "🎥 已配對，建立連線中...";
+    };
+
+    peerConnection.onicecandidate = (event) => {
+      if (event.candidate) {
+        socket.emit("ice-candidate", event.candidate);
+      }
+    };
+  }
+
+  async function cleanup() {
+    if (peerConnection) peerConnection.close();
+    peerConnection = null;
+
+    if (socket) {
+      socket.removeAllListeners();
+      socket.disconnect();
+    }
+  }
+
+  async function leaveChat() {
+    await cleanup();
+    statusDiv.textContent = "你已離開聊天室";
+  }
+
+  async function nextUser() {
+    await cleanup();
+    socket = io(); // 建立新的 socket
+    registerSocketHandlers(); // 重新綁定事件
+  }
+
+  function registerSocketHandlers() {
+    socket.on("connect", async () => {
+      console.log("Socket 重新連線，準備媒體...");
+      await start();
+      socket.emit("join");
+    });
+
+    socket.on("ready", async (partnerId) => {
+      const offer = await peerConnection.createOffer();
+      await peerConnection.setLocalDescription(offer);
+      socket.emit("offer", { to: partnerId, sdp: offer });
+    });
+
+    socket.on("offer", async ({ from, sdp }) => {
+      await start();
+      await peerConnection.setRemoteDescription(new RTCSessionDescription(sdp));
+      const answer = await peerConnection.createAnswer();
+      await peerConnection.setLocalDescription(answer);
+      socket.emit("answer", { to: from, sdp: answer });
+    });
+
+    socket.on("answer", async ({ sdp }) => {
+      const remoteDesc = new RTCSessionDescription(sdp);
+      await peerConnection.setRemoteDescription(remoteDesc);
+    });
+
+    socket.on("ice-candidate", async (candidate) => {
+      try {
+        await peerConnection.addIceCandidate(candidate);
+      } catch (e) {
+        console.error("ICE 加入失敗", e);
+      }
+    });
+
+    socket.on("disconnect", () => {
+      statusDiv.textContent = "連線中斷";
+    });
+  }
+
+  window.onload = () => {
+    registerSocketHandlers(); // 頁面載入時先綁定 socket 事件
+  };
+</script>
