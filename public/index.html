@@ -24,22 +24,23 @@
   <video id="remoteVideo" autoplay playsinline width="320"></video>
   <br />
   <button onclick="leaveChat()">離開</button>
-  <button onclick="nextChat()">下一個</button>
+  <button onclick="nextUser()">下一個</button>
 
   <!-- 使用 CDN 載入 socket.io -->
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js" crossorigin="anonymous"></script>
 
   <script>
-    const socket = io();
-    const localVideo = document.getElementById("localVideo");
-    const remoteVideo = document.getElementById("remoteVideo");
-    const statusDiv = document.getElementById("status");
-
-    let localStream;
+    let socket;
     let peerConnection;
+    let localStream;
+
     const config = {
       iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
     };
+
+    const statusDiv = document.getElementById("status");
+    const localVideo = document.getElementById("localVideo");
+    const remoteVideo = document.getElementById("remoteVideo");
 
     async function start() {
       try {
@@ -51,7 +52,7 @@
 
         peerConnection.ontrack = (event) => {
           remoteVideo.srcObject = event.streams[0];
-          statusDiv.textContent = "✅ 配對成功，開始通話中...";
+          statusDiv.textContent = "🎥 已配對，建立連線中...";
         };
 
         peerConnection.onicecandidate = (event) => {
@@ -65,166 +66,82 @@
       }
     }
 
-    function leaveChat() {
-      if (peerConnection) {
-        peerConnection.close();
-        peerConnection = null;
+    async function cleanup() {
+      if (peerConnection) peerConnection.close();
+      peerConnection = null;
+
+      if (localStream) {
+        localStream.getTracks().forEach(track => track.stop());
+        localVideo.srcObject = null;
+        remoteVideo.srcObject = null;
       }
-      if (socket.connected) {
+
+      if (socket) {
+        socket.removeAllListeners();
         socket.disconnect();
       }
-      if (localVideo.srcObject) {
-        localVideo.srcObject.getTracks().forEach(track => track.stop());
-        localVideo.srcObject = null;
-      }
-      remoteVideo.srcObject = null;
+    }
+
+    async function leaveChat() {
+      await cleanup();
       statusDiv.textContent = "你已離開聊天室";
     }
 
-    function nextChat() {
-      leaveChat();
-      statusDiv.textContent = "正在重新配對中...";
-      setTimeout(() => window.location.reload(), 1000);
+    async function nextUser() {
+      await cleanup();
+      initSocket();
     }
 
-    socket.on("connect", async () => {
-      console.log("Socket 已連線，開始取得使用者媒體");
-      await start();
-      console.log("媒體取得完成，送出 join");
-      socket.emit("join");
-    });
+    function registerSocketHandlers() {
+      socket.on("connect", async () => {
+        console.log("Socket 已連線，開始取得使用者媒體");
+        await start();
+        socket.emit("join");
+      });
 
-    socket.on("ready", async (partnerId) => {
-      const offer = await peerConnection.createOffer();
-      await peerConnection.setLocalDescription(offer);
-      socket.emit("offer", { to: partnerId, sdp: offer });
-      statusDiv.textContent = "📤 配對成功，發送 offer...";
-    });
+      socket.on("ready", async (partnerId) => {
+        const offer = await peerConnection.createOffer();
+        await peerConnection.setLocalDescription(offer);
+        socket.emit("offer", { to: partnerId, sdp: offer });
+        statusDiv.textContent = "📤 配對成功，發送 offer...";
+      });
 
-    socket.on("offer", async ({ from, sdp }) => {
-      await start();
-      await peerConnection.setRemoteDescription(new RTCSessionDescription(sdp));
-      const answer = await peerConnection.createAnswer();
-      await peerConnection.setLocalDescription(answer);
-      socket.emit("answer", { to: from, sdp: answer });
-      statusDiv.textContent = "🔁 已配對，建立連線中...";
-    });
+      socket.on("offer", async ({ from, sdp }) => {
+        await start();
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(sdp));
+        const answer = await peerConnection.createAnswer();
+        await peerConnection.setLocalDescription(answer);
+        socket.emit("answer", { to: from, sdp: answer });
+        statusDiv.textContent = "🔁 已配對，建立連線中...";
+      });
 
-    socket.on("answer", async ({ sdp }) => {
-      const remoteDesc = new RTCSessionDescription(sdp);
-      await peerConnection.setRemoteDescription(remoteDesc);
-      statusDiv.textContent = "🟢 已建立連線，等待視訊串流...";
-    });
+      socket.on("answer", async ({ sdp }) => {
+        const remoteDesc = new RTCSessionDescription(sdp);
+        await peerConnection.setRemoteDescription(remoteDesc);
+        statusDiv.textContent = "🟢 已建立連線，等待視訊串流...";
+      });
 
-    socket.on("ice-candidate", async (candidate) => {
-      try {
-        await peerConnection.addIceCandidate(candidate);
-      } catch (e) {
-        console.error("加入 ICE 候選失敗:", e);
-      }
-    });
+      socket.on("ice-candidate", async (candidate) => {
+        try {
+          await peerConnection.addIceCandidate(candidate);
+        } catch (e) {
+          console.error("加入 ICE 候選失敗:", e);
+        }
+      });
 
-    socket.on("disconnect", () => {
-      statusDiv.textContent = "❌ 連線中斷";
-    });
+      socket.on("disconnect", () => {
+        statusDiv.textContent = "❌ 連線中斷";
+      });
+    }
+
+    function initSocket() {
+      socket = io();
+      registerSocketHandlers();
+    }
+
+    window.onload = () => {
+      initSocket();
+    };
   </script>
 </body>
 </html>
-<button onclick="leaveChat()">離開</button>
-<button onclick="nextUser()">下一個</button>
-
-<script>
-  let socket = io();
-  let peerConnection;
-  let localStream;
-  const config = {
-    iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
-  };
-
-  const statusDiv = document.getElementById("status");
-  const localVideo = document.getElementById("localVideo");
-  const remoteVideo = document.getElementById("remoteVideo");
-
-  async function start() {
-    localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-    localVideo.srcObject = localStream;
-
-    peerConnection = new RTCPeerConnection(config);
-    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
-
-    peerConnection.ontrack = (event) => {
-      remoteVideo.srcObject = event.streams[0];
-      statusDiv.textContent = "🎥 已配對，建立連線中...";
-    };
-
-    peerConnection.onicecandidate = (event) => {
-      if (event.candidate) {
-        socket.emit("ice-candidate", event.candidate);
-      }
-    };
-  }
-
-  async function cleanup() {
-    if (peerConnection) peerConnection.close();
-    peerConnection = null;
-
-    if (socket) {
-      socket.removeAllListeners();
-      socket.disconnect();
-    }
-  }
-
-  async function leaveChat() {
-    await cleanup();
-    statusDiv.textContent = "你已離開聊天室";
-  }
-
-  async function nextUser() {
-    await cleanup();
-    socket = io(); // 建立新的 socket
-    registerSocketHandlers(); // 重新綁定事件
-  }
-
-  function registerSocketHandlers() {
-    socket.on("connect", async () => {
-      console.log("Socket 重新連線，準備媒體...");
-      await start();
-      socket.emit("join");
-    });
-
-    socket.on("ready", async (partnerId) => {
-      const offer = await peerConnection.createOffer();
-      await peerConnection.setLocalDescription(offer);
-      socket.emit("offer", { to: partnerId, sdp: offer });
-    });
-
-    socket.on("offer", async ({ from, sdp }) => {
-      await start();
-      await peerConnection.setRemoteDescription(new RTCSessionDescription(sdp));
-      const answer = await peerConnection.createAnswer();
-      await peerConnection.setLocalDescription(answer);
-      socket.emit("answer", { to: from, sdp: answer });
-    });
-
-    socket.on("answer", async ({ sdp }) => {
-      const remoteDesc = new RTCSessionDescription(sdp);
-      await peerConnection.setRemoteDescription(remoteDesc);
-    });
-
-    socket.on("ice-candidate", async (candidate) => {
-      try {
-        await peerConnection.addIceCandidate(candidate);
-      } catch (e) {
-        console.error("ICE 加入失敗", e);
-      }
-    });
-
-    socket.on("disconnect", () => {
-      statusDiv.textContent = "連線中斷";
-    });
-  }
-
-  window.onload = () => {
-    registerSocketHandlers(); // 頁面載入時先綁定 socket 事件
-  };
-</script>
