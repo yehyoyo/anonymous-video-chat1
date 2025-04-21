@@ -1,93 +1,109 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
+  <meta charset="UTF-8" />
   <title>匿名視訊聊天室</title>
+  <style>
+    #status {
+      font-weight: bold;
+      margin-bottom: 10px;
+      color: green;
+    }
+  </style>
 </head>
 <body>
   <h1>Welcome to the Anonymous Video Chat</h1>
+  <div id="status">等待配對中...</div>
   <video id="localVideo" autoplay playsinline muted width="320"></video>
   <video id="remoteVideo" autoplay playsinline width="320"></video>
   <br />
   <button onclick="leaveChat()">離開</button>
 
- <script src="https://cdn.socket.io/4.7.2/socket.io.min.js" crossorigin="anonymous"></script>
+  <!-- 使用 CDN 載入 socket.io -->
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js" crossorigin="anonymous"></script>
+
   <script>
     const socket = io();
     const localVideo = document.getElementById("localVideo");
     const remoteVideo = document.getElementById("remoteVideo");
+    const statusDiv = document.getElementById("status");
+
     let localStream;
     let peerConnection;
-
     const config = {
-      iceServers: [
-        { urls: "stun:stun.l.google.com:19302" }
-      ]
+      iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
     };
 
     async function start() {
-      localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      localVideo.srcObject = localStream;
+      try {
+        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        localVideo.srcObject = localStream;
 
-      peerConnection = new RTCPeerConnection(config);
+        peerConnection = new RTCPeerConnection(config);
+        localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
 
-      localStream.getTracks().forEach(track => {
-        peerConnection.addTrack(track, localStream);
-      });
+        peerConnection.ontrack = (event) => {
+          remoteVideo.srcObject = event.streams[0];
+          statusDiv.textContent = "配對成功，開始通話中...";
+        };
 
-      peerConnection.ontrack = (event) => {
-        remoteVideo.srcObject = event.streams[0];
-      };
-
-      peerConnection.onicecandidate = (event) => {
-        if (event.candidate) {
-          socket.emit("ice-candidate", event.candidate);
-        }
-      };
+        peerConnection.onicecandidate = (event) => {
+          if (event.candidate) {
+            socket.emit("ice-candidate", event.candidate);
+          }
+        };
+      } catch (e) {
+        console.error("無法開啟相機或麥克風:", e);
+        statusDiv.textContent = "⚠️ 無法使用相機/麥克風";
+      }
     }
 
-    socket.on("offer", async ({ from }) => {
-      await start();
+    function leaveChat() {
+      if (peerConnection) peerConnection.close();
+      if (socket.connected) socket.disconnect();
+      statusDiv.textContent = "你已離開聊天室";
+    }
 
+    socket.on("connect", async () => {
+      console.log("Socket 已連線，開始取得使用者媒體");
+      await start();
+      console.log("媒體取得完成，送出 join");
+      socket.emit("join");
+    });
+
+    socket.on("ready", async (partnerId) => {
       const offer = await peerConnection.createOffer();
       await peerConnection.setLocalDescription(offer);
+      socket.emit("offer", { to: partnerId, sdp: offer });
+      statusDiv.textContent = "配對成功，發送 offer...";
+    });
 
-      socket.emit("answer", {
-        to: from,
-        sdp: offer
-      });
+    socket.on("offer", async ({ from, sdp }) => {
+      await start();
+      await peerConnection.setRemoteDescription(new RTCSessionDescription(sdp));
+      const answer = await peerConnection.createAnswer();
+      await peerConnection.setLocalDescription(answer);
+      socket.emit("answer", { to: from, sdp: answer });
+      statusDiv.textContent = "已配對，建立連線中...";
     });
 
     socket.on("answer", async ({ sdp }) => {
       const remoteDesc = new RTCSessionDescription(sdp);
       await peerConnection.setRemoteDescription(remoteDesc);
+      statusDiv.textContent = "已建立連線，等待視訊串流...";
     });
 
     socket.on("ice-candidate", async (candidate) => {
       try {
         await peerConnection.addIceCandidate(candidate);
       } catch (e) {
-        console.error("Error adding received ice candidate", e);
+        console.error("加入 ICE 候選失敗:", e);
       }
     });
 
-    function leaveChat() {
-      socket.disconnect();
-      if (peerConnection) {
-        peerConnection.close();
-      }
-    }
+    socket.on("disconnect", () => {
+      statusDiv.textContent = "連線中斷";
+    });
   </script>
 </body>
 </html>
-window.onload = function () {
-  console.log("頁面載入完成，等待與伺服器連線...");
-};
-
-socket.on("connect", async () => {
-  console.log("Socket 已連線，開始取得使用者媒體");
-  await start();
-  console.log("媒體取得完成，送出 join");
-  socket.emit("join");
-});
-
