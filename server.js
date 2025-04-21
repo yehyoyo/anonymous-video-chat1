@@ -9,26 +9,26 @@ const io = new Server(server);
 
 const PORT = process.env.PORT || 3000;
 
-// 提供前端靜態檔案（/public/index.html）
 app.use(express.static(path.join(__dirname, "public")));
 
 let waitingUser = null;
+const userPartners = new Map(); // 儲存 socket.id ↔ partnerId 對應
 
 io.on("connection", (socket) => {
-  console.log("使用者已連線:", socket.id);
+  console.log("🟢 使用者已連線:", socket.id);
 
   socket.on("join", () => {
-    if (waitingUser) {
-      // 有人正在等，配對他們
-      socket.partner = waitingUser;
-      waitingUser.partner = socket;
-
-      socket.emit("ready", waitingUser.id);
-      waitingUser.emit("ready", socket.id);
-
+    if (waitingUser && waitingUser.id !== socket.id) {
+      // 配對兩人
+      const partner = waitingUser;
       waitingUser = null;
+
+      userPartners.set(socket.id, partner.id);
+      userPartners.set(partner.id, socket.id);
+
+      socket.emit("ready", partner.id);
+      partner.emit("ready", socket.id);
     } else {
-      // 沒人等，自己先等
       waitingUser = socket;
     }
   });
@@ -42,23 +42,30 @@ io.on("connection", (socket) => {
   });
 
   socket.on("ice-candidate", (candidate) => {
-    if (socket.partner) {
-      socket.partner.emit("ice-candidate", candidate);
+    const partnerId = userPartners.get(socket.id);
+    if (partnerId) {
+      io.to(partnerId).emit("ice-candidate", candidate);
     }
   });
 
   socket.on("disconnect", () => {
-    console.log("使用者離線:", socket.id);
-    if (waitingUser === socket) {
+    console.log("🔴 使用者離線:", socket.id);
+
+    // 若在等待中則移除
+    if (waitingUser && waitingUser.id === socket.id) {
       waitingUser = null;
     }
-    if (socket.partner) {
-      socket.partner.emit("disconnect");
-      socket.partner.partner = null;
+
+    // 通知 partner
+    const partnerId = userPartners.get(socket.id);
+    if (partnerId) {
+      io.to(partnerId).emit("disconnect");
+      userPartners.delete(partnerId);
+      userPartners.delete(socket.id);
     }
   });
 });
 
 server.listen(PORT, () => {
-  console.log(`✅ Server running on http://localhost:${PORT}`);
+  console.log(`✅ Server running at http://localhost:${PORT}`);
 });
