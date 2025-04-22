@@ -10,9 +10,10 @@
       color: green;
     }
     video {
+      margin: 5px;
       width: 45%;
-      margin: 10px;
-      background-color: black;
+      height: auto;
+      background: black;
     }
     button {
       margin-right: 8px;
@@ -26,135 +27,136 @@
   <video id="remoteVideo" autoplay playsinline></video>
   <br />
   <button onclick="leaveChat()">離開</button>
-  <button onclick="nextChat()">下一個</button>
+  <button onclick="nextUser()">下一個</button>
 
+  <!-- 使用 CDN 載入 socket.io -->
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js" crossorigin="anonymous"></script>
+
   <script>
-    const socket = io();
+    const statusDiv = document.getElementById("status");
     const localVideo = document.getElementById("localVideo");
     const remoteVideo = document.getElementById("remoteVideo");
-    const statusDiv = document.getElementById("status");
 
-    let localStream;
-    let peerConnection;
-    let isInitiator = false;
+    let socket = null;
+    let peerConnection = null;
+    let localStream = null;
 
-    const config = {
-      iceServers: [
-        { urls: "stun:stun.l.google.com:19302" },
-        {
-          urls: "turn:global.xirsys.net",
-          username: "yoyoyeh",
-          credential: "6d75bdcc-1f81-11f0-a15b-0242ac130002"
-        }
-      ]
-    };
-
-    async function startMedia() {
-      try {
-        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        localVideo.srcObject = localStream;
-        console.log("🎥 取得本地媒體成功");
-      } catch (e) {
-        console.error("❌ 媒體取得失敗:", e);
-        statusDiv.textContent = "⚠️ 無法使用相機或麥克風";
-      }
+    async function getXirsysIceServers() {
+      const response = await fetch("https://global.xirsys.net/_turn/MyFirstApp", {
+        method: "PUT",
+        headers: {
+          "Authorization": "Basic " + btoa("yoyoyeh:6d75bdcc-1f81-11f0-a15b-0242ac130002"),
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ format: "urls" })
+      });
+      const data = await response.json();
+      return data.v.iceServers;
     }
 
-    function createPeer() {
-      peerConnection = new RTCPeerConnection(config);
+    async function start() {
+      const iceServers = await getXirsysIceServers();
+      peerConnection = new RTCPeerConnection({ iceServers });
+
+      localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      localVideo.srcObject = localStream;
 
       localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
 
-      peerConnection.onicecandidate = (e) => {
-        if (e.candidate) {
-          console.log("📤 發送 ICE:", e.candidate);
-          socket.emit("ice-candidate", e.candidate);
+      peerConnection.onicecandidate = (event) => {
+        if (event.candidate) {
+          socket.emit("ice-candidate", event.candidate);
         }
       };
 
-      peerConnection.ontrack = (e) => {
-        console.log("✅ 收到遠端媒體流:", e.streams);
-        remoteVideo.srcObject = e.streams[0];
+      peerConnection.ontrack = (event) => {
+        console.log("✅ 收到遠端媒體串流:", event.streams);
+        remoteVideo.srcObject = event.streams[0];
+        checkAudio();
         statusDiv.textContent = "✅ 已建立連線，等待視訊串流...";
       };
-
-      peerConnection.onconnectionstatechange = () => {
-        console.log("🔄 Peer 連線狀態:", peerConnection.connectionState);
-      };
     }
 
-    function cleanup() {
+    function checkAudio() {
+      const stream = remoteVideo.srcObject;
+      if (!stream) return;
+      const audioTracks = stream.getAudioTracks();
+      if (audioTracks.length > 0) {
+        statusDiv.innerHTML += "<br>🎤 麥克風狀態：有聲音 ✅";
+      } else {
+        statusDiv.innerHTML += "<br>🔇 麥克風狀態：無聲音";
+      }
+    }
+
+    async function cleanup() {
       if (peerConnection) peerConnection.close();
       peerConnection = null;
-      remoteVideo.srcObject = null;
+      if (socket) {
+        socket.removeAllListeners();
+        socket.disconnect();
+      }
     }
 
-    function leaveChat() {
-      cleanup();
-      socket.emit("manual-leave");
+    async function leaveChat() {
+      await cleanup();
+      if (localStream) {
+        localStream.getTracks().forEach(track => track.stop());
+        localVideo.srcObject = null;
+      }
+      remoteVideo.srcObject = null;
       statusDiv.textContent = "你已離開聊天室";
     }
 
-    function nextChat() {
-      leaveChat();
-      statusDiv.textContent = "🔄 重新配對中...";
-      socket.connect();
+    async function nextUser() {
+      await leaveChat();
+      initSocket();
     }
 
-    socket.on("connect", async () => {
-      console.log("🔌 Socket 已連線");
-      await startMedia();
-      socket.emit("join");
-    });
+    function initSocket() {
+      socket = io();
 
-    socket.on("ready", async (partnerId) => {
-      console.log("🟢 配對成功，準備送出 offer 給", partnerId);
-      createPeer();
-      const offer = await peerConnection.createOffer();
-      await peerConnection.setLocalDescription(offer);
-      socket.emit("offer", { to: partnerId, sdp: offer });
-      statusDiv.textContent = "📤 傳送 offer...";
-    });
+      socket.on("connect", async () => {
+        statusDiv.textContent = "🟢 已連線，等待配對中...";
+        await start();
+        socket.emit("join");
+      });
 
-    socket.on("offer", async ({ from, sdp }) => {
-      console.log("📨 收到 offer:", from);
-      await startMedia();
-      createPeer();
-      await peerConnection.setRemoteDescription(new RTCSessionDescription(sdp));
-      const answer = await peerConnection.createAnswer();
-      await peerConnection.setLocalDescription(answer);
-      socket.emit("answer", { to: from, sdp: answer });
-      statusDiv.textContent = "📨 回覆 answer 中...";
-    });
+      socket.on("ready", async (partnerId) => {
+        const offer = await peerConnection.createOffer();
+        await peerConnection.setLocalDescription(offer);
+        socket.emit("offer", { to: partnerId, sdp: offer });
+        statusDiv.innerHTML = "📤 發送 offer 中...";
+      });
 
-    socket.on("answer", async ({ sdp }) => {
-      console.log("📥 收到 answer:", sdp);
-      await peerConnection.setRemoteDescription(new RTCSessionDescription(sdp));
-      statusDiv.textContent = "📶 連線成功，等待視訊串流...";
-    });
+      socket.on("offer", async ({ from, sdp }) => {
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(sdp));
+        const answer = await peerConnection.createAnswer();
+        await peerConnection.setLocalDescription(answer);
+        socket.emit("answer", { to: from, sdp: answer });
+        statusDiv.innerHTML = "📥 回覆 answer 中...";
+      });
 
-    socket.on("ice-candidate", async (candidate) => {
-      try {
-        console.log("📩 收到 ICE 候選:", candidate);
-        await peerConnection.addIceCandidate(candidate);
-      } catch (e) {
-        console.error("❌ ICE 加入失敗:", e);
-      }
-    });
+      socket.on("answer", async ({ sdp }) => {
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(sdp));
+        statusDiv.innerHTML = "✅ answer 接收完成...";
+      });
 
-    socket.on("partner-left", () => {
-      statusDiv.textContent = "⚠️ 對方已離線，請重新配對...";
-      cleanup();
-    });
+      socket.on("ice-candidate", async (candidate) => {
+        try {
+          await peerConnection.addIceCandidate(candidate);
+        } catch (e) {
+          console.error("加入 ICE 候選失敗：", e);
+        }
+      });
 
-    socket.on("disconnect", () => {
-      console.warn("⚠️ Socket 斷線");
-      statusDiv.textContent = "❌ 連線中斷";
-    });
+      socket.on("partner-left", () => {
+        statusDiv.textContent = "⚠️ 對方已離線，請重新配對...";
+        remoteVideo.srcObject = null;
+      });
+    }
 
     window.onload = () => {
-      startMedia();
+      initSocket();
     };
   </script>
 </body>
